@@ -4,7 +4,7 @@ Stateless bash+jq reconciler that mirrors your owned Shortcut stories onto a Tre
 
 ## Prerequisites
 
-- `bash`, `curl`, `jq`
+- `bash` (macOS stock Bash 3.2 is supported — no Bash 4+ / associative arrays), `curl`, `jq`
 - Shortcut API token and your member UUID (`SHORTCUT_OWNER_ID`)
 - Trello API key + token and a board id
 

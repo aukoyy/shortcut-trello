@@ -388,13 +388,10 @@ done < <(jq -r '
 echo "$lists_json"  >"$tmpdir/lists.json"
 echo "$labels_json" >"$tmpdir/labels.json"
 
-# Map story id → card for quick lookup
-declare -A CARD_BY_STORY
-while IFS=$'\t' read -r sid cid; do
-  [[ -n "$sid" ]] && CARD_BY_STORY["$sid"]="$cid"
-done < <(jq -r '.[] | "\(.id)\t\(.card.id)"' <<<"$sc_cards")
-
-declare -A SEEN_STORY
+# Map story id → card id as a JSON object (bash 3.2 has no associative arrays)
+card_by_story=$(jq -c 'map(select(.id != null and .id != "") | {(.id | tostring): .card.id}) | add // {}' <<<"$sc_cards")
+# Story ids present in this reconcile pass (for orphan detection)
+seen_story_ids=$(jq -c '[.[].id | tostring] | unique' <<<"$desired")
 
 # --- 3) Diff + apply: stories → cards ---
 echo "Reconciling…" >&2
@@ -413,7 +410,6 @@ for ((i = 0; i < story_count; i++)); do
   sprio=$(jq -r '.priority // empty' <<<"$story")
   sperma=$(jq -r '.permalink // empty' <<<"$story")
 
-  SEEN_STORY["$sid"]=1
   want_name="$(desired_name "$sid" "$sname")"
   want_desc="$(card_desc "$sperma" "$sepic" "$sproject" "$sreq" "$sprio")"
 
@@ -442,7 +438,8 @@ for ((i = 0; i < story_count; i++)); do
     fi
   fi
 
-  if [[ -z "${CARD_BY_STORY[$sid]:-}" ]]; then
+  card_id=$(jq -r --arg sid "$sid" '.[$sid] // empty' <<<"$card_by_story")
+  if [[ -z "$card_id" ]]; then
     # CREATE
     if $DRY_RUN; then
       echo "would-create: $want_name (list=${want_list_id:-n/a} labels=${want_labels_csv:-none})" >&2
@@ -474,7 +471,6 @@ for ((i = 0; i < story_count; i++)); do
   fi
 
   # UPDATE — compare and PUT only changed fields
-  card_id="${CARD_BY_STORY[$sid]}"
   card=$(jq -c --arg id "$card_id" '.[] | select(.id == $id)' <<<"$cards")
 
   cur_name=$(jq -r '.name' <<<"$card")
@@ -531,7 +527,7 @@ orphan_count=$(jq 'length' <<<"$sc_cards")
 for ((i = 0; i < orphan_count; i++)); do
   entry=$(jq -c --argjson i "$i" '.[$i]' <<<"$sc_cards")
   sid=$(jq -r '.id' <<<"$entry")
-  if [[ -n "${SEEN_STORY[$sid]:-}" ]]; then
+  if jq -e --arg sid "$sid" 'index($sid) != null' <<<"$seen_story_ids" >/dev/null; then
     continue
   fi
   card=$(jq -c '.card' <<<"$entry")
