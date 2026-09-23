@@ -65,15 +65,57 @@ export SHORTCUT_API_TOKEN=…
 ./shortcut-stories.sh <owner-uuid> --tsv    # TSV
 ```
 
-## Scheduling (follow-up)
+## Scheduling (launchd, every 15 minutes)
 
-Not included in this slice. When you want unattended sync, add a launchd plist (macOS) or cron that runs `reconcile.sh` on an interval after you've validated dry-runs. Example launchd sketch:
+A user LaunchAgent runs a **real** reconcile (not dry-run) every 15 minutes.
 
-```xml
-<!-- ~/Library/LaunchAgents/com.user.shortcut-trello.plist -->
-<!-- ProgramArguments: /path/to/reconcile.sh -->
-<!-- WorkingDirectory: /path/to/this/repo -->
-<!-- StartInterval: 900 -->
+| | |
+|---|---|
+| **Label** | `com.aukoyy.shortcut-trello-reconcile` |
+| **Repo plist** | `launchd/com.aukoyy.shortcut-trello-reconcile.plist` |
+| **Install path** | `~/Library/LaunchAgents/com.aukoyy.shortcut-trello-reconcile.plist` |
+| **Logs** | `~/Library/Logs/shortcut-trello-reconcile.log` |
+
+Requires a filled `.env` in this directory (the installer refuses to proceed without it).
+
+### Install
+
+```bash
+./scripts/install-launchd.sh
 ```
 
-Load with `launchctl load ~/Library/LaunchAgents/com.user.shortcut-trello.plist` once `.env` is filled and dry-run looks right.
+This copies the plist into `~/Library/LaunchAgents/`, bootstraps it in `gui/$(id -u)`, enables it, and kickstarts one run.
+
+Manual equivalent:
+
+```bash
+cp launchd/com.aukoyy.shortcut-trello-reconcile.plist ~/Library/LaunchAgents/
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.aukoyy.shortcut-trello-reconcile.plist
+launchctl enable "gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile"
+launchctl kickstart -k "gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile"
+```
+
+### Check status / logs
+
+```bash
+launchctl print "gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile"
+tail -n 50 ~/Library/Logs/shortcut-trello-reconcile.log
+```
+
+### Pause / resume
+
+```bash
+# Pause (unload; keeps the plist on disk)
+launchctl bootout "gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile"
+
+# Resume
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.aukoyy.shortcut-trello-reconcile.plist
+```
+
+### Uninstall
+
+```bash
+./scripts/uninstall-launchd.sh
+```
+
+Removes the job and the installed plist. The log file is left in place.
