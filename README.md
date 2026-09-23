@@ -67,11 +67,12 @@ export SHORTCUT_API_TOKEN=…
 
 ## Scheduling (launchd, every 15 minutes)
 
-A user LaunchAgent runs a **real** reconcile (not dry-run) every 15 minutes.
+A user LaunchAgent runs a **real** reconcile (not dry-run) every **15 minutes** while the Mac is on and you are logged in. Label: `com.aukoyy.shortcut-trello-reconcile`.
 
 | | |
 |---|---|
 | **Label** | `com.aukoyy.shortcut-trello-reconcile` |
+| **Interval** | 900s (`StartInterval`) — while Mac is on / logged in |
 | **Repo plist** | `launchd/com.aukoyy.shortcut-trello-reconcile.plist` |
 | **Install path** | `~/Library/LaunchAgents/com.aukoyy.shortcut-trello-reconcile.plist` |
 | **Logs** | `~/Library/Logs/shortcut-trello-reconcile.log` |
@@ -84,7 +85,7 @@ Requires a filled `.env` in this directory (the installer refuses to proceed wit
 ./scripts/install-launchd.sh
 ```
 
-This copies the plist into `~/Library/LaunchAgents/`, bootstraps it in `gui/$(id -u)`, enables it, and kickstarts one run.
+What it does: copies the plist into `~/Library/LaunchAgents/`, bootstraps it in `gui/$(id -u)`, enables it, and kickstarts one run immediately. Refuses to install if `.env` is missing.
 
 Manual equivalent:
 
@@ -95,11 +96,30 @@ launchctl enable "gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile"
 launchctl kickstart -k "gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile"
 ```
 
-### Check status / logs
+### Check recent logs
 
 ```bash
-launchctl print "gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile"
 tail -n 50 ~/Library/Logs/shortcut-trello-reconcile.log
+```
+
+### Job status
+
+```bash
+launchctl print gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile
+```
+
+### Manual kickstart / run once
+
+Force one run now (supported; same as install’s kickstart):
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.aukoyy.shortcut-trello-reconcile"
+```
+
+Or run the reconciler directly from the repo (bypasses launchd):
+
+```bash
+./reconcile.sh
 ```
 
 ### Pause / resume
