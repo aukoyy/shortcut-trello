@@ -54,7 +54,6 @@ esac
 
 SC_API="https://api.app.shortcut.com/api/v3"
 TR_API="https://api.trello.com/1"
-TR_AUTH="key=${TRELLO_KEY}&token=${TRELLO_TOKEN}"
 
 CREATED=0
 UPDATED=0
@@ -68,28 +67,86 @@ WOULD_SKIP=0
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-# --- HTTP helpers (fail hard; no silent empty arrays) ---
+# Redact secrets from error snippets (never print key/token values).
+redact_secrets() {
+  local s="$1"
+  s="${s//${TRELLO_KEY}/<TRELLO_KEY>}"
+  s="${s//${TRELLO_TOKEN}/<TRELLO_TOKEN>}"
+  s="${s//${SHORTCUT_API_TOKEN}/<SHORTCUT_API_TOKEN>}"
+  # Also scrub query-style leaks if present in a pasted URL/body.
+  s="$(printf '%s' "$s" | sed -E \
+    -e 's/(key=)[^&[:space:]"]+/\1***/g' \
+    -e 's/(token=)[^&[:space:]"]+/\1***/g')"
+  printf '%s' "$s"
+}
+
+# Fail with HTTP status + redacted body snippet (curl -sf exits silently under set -e).
+http_fail() {
+  local label="$1" method="$2" path="$3" status="$4" body_file="$5"
+  local snippet
+  snippet="$(head -c 300 "$body_file" 2>/dev/null || true)"
+  snippet="$(redact_secrets "$snippet")"
+  snippet="${snippet//$'\n'/ }"
+  echo "error: ${label} ${method} ${path} → HTTP ${status}${snippet:+: ${snippet}}" >&2
+  if [[ "$label" == "Trello" && "$status" == "401" ]]; then
+    echo "hint: TRELLO_KEY is the Power-Up API key; TRELLO_TOKEN must be a generated user Token (not the OAuth Secret)." >&2
+  fi
+  exit 1
+}
+
+# --- HTTP helpers (fail hard with clear errors; no silent empty arrays) ---
 sc_get() {
   local path="$1"
-  curl -sf \
+  local body_file status
+  body_file="$(mktemp "$tmpdir/sc.XXXXXX")"
+  status="$(curl -sS -o "$body_file" -w "%{http_code}" \
     -H "Shortcut-Token: ${SHORTCUT_API_TOKEN}" \
     -H "Content-Type: application/json" \
-    "$SC_API$path"
+    "$SC_API$path")" || {
+    echo "error: Shortcut GET ${path} → curl transport failure" >&2
+    exit 1
+  }
+  if [[ "$status" != 2* ]]; then
+    http_fail "Shortcut" "GET" "$path" "$status" "$body_file"
+  fi
+  cat "$body_file"
 }
 
 sc_post() {
   local path="$1"
   local body="$2"
-  curl -sf -X POST \
+  local body_file status
+  body_file="$(mktemp "$tmpdir/sc.XXXXXX")"
+  status="$(curl -sS -o "$body_file" -w "%{http_code}" -X POST \
     -H "Shortcut-Token: ${SHORTCUT_API_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$body" \
-    "$SC_API$path"
+    "$SC_API$path")" || {
+    echo "error: Shortcut POST ${path} → curl transport failure" >&2
+    exit 1
+  }
+  if [[ "$status" != 2* ]]; then
+    http_fail "Shortcut" "POST" "$path" "$status" "$body_file"
+  fi
+  cat "$body_file"
 }
 
+# Trello auth via -G/--data-urlencode so key/token never need manual URL encoding.
 tr_get() {
   local path="$1"
-  curl -sf "${TR_API}${path}?${TR_AUTH}"
+  local body_file status
+  body_file="$(mktemp "$tmpdir/tr.XXXXXX")"
+  status="$(curl -sS -o "$body_file" -w "%{http_code}" -G \
+    --data-urlencode "key=${TRELLO_KEY}" \
+    --data-urlencode "token=${TRELLO_TOKEN}" \
+    "${TR_API}${path}")" || {
+    echo "error: Trello GET ${path} → curl transport failure" >&2
+    exit 1
+  }
+  if [[ "$status" != 2* ]]; then
+    http_fail "Trello" "GET" "$path" "$status" "$body_file"
+  fi
+  cat "$body_file"
 }
 
 tr_post() {
@@ -99,7 +156,19 @@ tr_post() {
   if $DRY_RUN; then
     return 0
   fi
-  curl -sf -X POST "${TR_API}${path}?${TR_AUTH}" "$@"
+  local body_file status
+  body_file="$(mktemp "$tmpdir/tr.XXXXXX")"
+  status="$(curl -sS -o "$body_file" -w "%{http_code}" -X POST \
+    --data-urlencode "key=${TRELLO_KEY}" \
+    --data-urlencode "token=${TRELLO_TOKEN}" \
+    "${TR_API}${path}" "$@")" || {
+    echo "error: Trello POST ${path} → curl transport failure" >&2
+    exit 1
+  }
+  if [[ "$status" != 2* ]]; then
+    http_fail "Trello" "POST" "$path" "$status" "$body_file"
+  fi
+  cat "$body_file"
 }
 
 tr_put() {
@@ -108,7 +177,19 @@ tr_put() {
   if $DRY_RUN; then
     return 0
   fi
-  curl -sf -X PUT "${TR_API}${path}?${TR_AUTH}" "$@"
+  local body_file status
+  body_file="$(mktemp "$tmpdir/tr.XXXXXX")"
+  status="$(curl -sS -o "$body_file" -w "%{http_code}" -X PUT \
+    --data-urlencode "key=${TRELLO_KEY}" \
+    --data-urlencode "token=${TRELLO_TOKEN}" \
+    "${TR_API}${path}" "$@")" || {
+    echo "error: Trello PUT ${path} → curl transport failure" >&2
+    exit 1
+  }
+  if [[ "$status" != 2* ]]; then
+    http_fail "Trello" "PUT" "$path" "$status" "$body_file"
+  fi
+  cat "$body_file"
 }
 
 # url-encode via jq
@@ -230,7 +311,7 @@ ensure_list() {
     return 0
   fi
   local created
-  created=$(curl -sf -X POST "${TR_API}/lists?${TR_AUTH}" \
+  created=$(tr_post "/lists" \
     --data-urlencode "name=${name}" \
     --data-urlencode "idBoard=${TRELLO_BOARD_ID}" \
     --data-urlencode "pos=bottom")
@@ -263,7 +344,7 @@ ensure_label() {
     return 0
   fi
   local created
-  created=$(curl -sf -X POST "${TR_API}/labels?${TR_AUTH}" \
+  created=$(tr_post "/labels" \
     --data-urlencode "name=${name}" \
     --data-urlencode "idBoard=${TRELLO_BOARD_ID}" \
     --data-urlencode "color=${color}")
@@ -440,8 +521,7 @@ for ((i = 0; i < story_count; i++)); do
     WOULD_UPDATE=$((WOULD_UPDATE + 1))
   else
     echo "update: sc-$sid ($change_list)" >&2
-    # Filter out dry-* placeholder writes (should not happen outside dry-run)
-    curl -sf -X PUT "${TR_API}/cards/${card_id}?${TR_AUTH}" "${put_args[@]}" >/dev/null
+    tr_put "/cards/${card_id}" "${put_args[@]}" >/dev/null
     UPDATED=$((UPDATED + 1))
   fi
 done

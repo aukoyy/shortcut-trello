@@ -20,9 +20,17 @@ Edit `.env` and fill:
 |---|---|
 | `SHORTCUT_API_TOKEN` | Shortcut → Settings → API tokens |
 | `SHORTCUT_OWNER_ID` | Your Shortcut member UUID (from `/api/v3/member` or the UI) |
-| `TRELLO_KEY` | [Trello Power-Up admin / app key](https://trello.com/power-ups/admin) |
-| `TRELLO_TOKEN` | Generated from the same app key page |
+| `TRELLO_KEY` | Power-Up **API key** from [trello.com/power-ups/admin](https://trello.com/power-ups/admin) (or trello.com/app-key) |
+| `TRELLO_TOKEN` | Generated user **Token** from that same page (authorize the app). **Not** the OAuth Secret |
 | `TRELLO_BOARD_ID` | Board URL or API (`/1/members/me/boards`) |
+
+Trello’s Power-Up page shows three different values — do not mix them up:
+
+| Value | Use in this repo? |
+|---|---|
+| API key | Yes → `TRELLO_KEY` |
+| User token (generated after “allow”) | Yes → `TRELLO_TOKEN` |
+| OAuth secret | No — never put this in `.env` |
 
 Optional:
 
