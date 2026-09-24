@@ -37,6 +37,25 @@ Optional:
 - `STATE_MODE=lists` (default) — one Trello list per Shortcut workflow state; missing lists are created. `labels` maps state to a label instead.
 - `SAFE_PRUNE=true` (default) — only archive orphan `sc-*` cards whose `dateLastActivity` is before local midnight today.
 
+### Card description & labels
+
+Each `sc-*` card gets a markdown description shaped for Sunsama:
+
+```
+[Open in Shortcut](https://app.shortcut.com/…)
+
+type: …
+team: …
+epic: …
+project: …
+requester: …
+priority: …
+```
+
+Empty fields use `-`. Type and team live in the description (not as Trello labels).
+
+**Labels:** each story owner name (from Shortcut `owners`) becomes a Trello label, color `blue`. With `STATE_MODE=lists`, those are the only labels on the card. With `STATE_MODE=labels`, the workflow-state label is kept as well. Updates set `idLabels` to exactly that set (old type/team labels are dropped).
+
 `.env` is gitignored; keep secrets out of commits.
 
 ## Dry-run (always do this first)
@@ -45,7 +64,7 @@ Optional:
 ./reconcile.sh --dry-run
 ```
 
-Prints would-create / would-update / would-archive actions without writing to Trello. Exit non-zero on API failure.
+Prints would-create / would-update / would-archive actions without writing to Trello. For creates and desc/label updates, also prints the planned **label names** and full **description** (no API secrets). Exit non-zero on API failure.
 
 ## Real run
 
