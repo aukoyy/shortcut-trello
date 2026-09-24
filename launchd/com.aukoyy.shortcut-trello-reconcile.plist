@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.aukoyy.shortcut-trello-reconcile</string>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/aukoyy/code/projects/shortcut-trello</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/aukoyy/code/projects/shortcut-trello/reconcile.sh</string>
+	</array>
+
+	<!-- Every 15 minutes -->
+	<key>StartInterval</key>
+	<integer>900</integer>
+
+	<!-- Run once when the agent is loaded (in addition to the interval) -->
+	<key>RunAtLoad</key>
+	<true/>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- Prefer system curl/jq; include Homebrew paths if tools move later -->
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin</string>
+	</dict>
+
+	<key>StandardOutPath</key>
+	<string>/Users/aukoyy/Library/Logs/shortcut-trello-reconcile.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/aukoyy/Library/Logs/shortcut-trello-reconcile.log</string>
+</dict>
+</plist>
