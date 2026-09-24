@@ -45,12 +45,15 @@ STATE_MODE="${STATE_MODE:-lists}"
 SAFE_PRUNE="${SAFE_PRUNE:-true}"
 # Comma-separated name:color pairs; keys match owner display names case-insensitively
 # as substrings (so "ryan" matches "Ryan", "Ryan Smith", etc.). Unmatched → default.
-# Defaults avoid priority-label colors (red/pink/orange/sky/blue).
-OWNER_LABEL_COLORS="${OWNER_LABEL_COLORS:-ryan:green,øyvind:purple,oyvind:purple}"
-OWNER_LABEL_COLOR_DEFAULT="${OWNER_LABEL_COLOR_DEFAULT:-lime}"
-# Priority → Trello label colors (closest to Shortcut UI). Keys match priority
-# strings case-insensitively (exact). None / empty / "-" → no priority label.
-PRIORITY_LABEL_COLORS="${PRIORITY_LABEL_COLORS:-Highest:red,High:pink,Medium:orange,Low:sky,Lowest:blue}"
+# Trello only accepts preset colors (not custom OKLCH/hex). Defaults are the closest
+# presets to Shortcut UI OKLCH and avoid priority colors (red/pink/yellow/sky/blue).
+# Source hues (approx): Øyvind ~152 → green; Ryan ~129 → lime; others → purple.
+OWNER_LABEL_COLORS="${OWNER_LABEL_COLORS:-ryan:lime,øyvind:green,oyvind:green}"
+OWNER_LABEL_COLOR_DEFAULT="${OWNER_LABEL_COLOR_DEFAULT:-purple}"
+# Priority → Trello label colors (closest presets to Shortcut OKLCH). Keys match
+# priority strings case-insensitively (exact). None / empty / "-" → no priority label.
+# Source hue (approx): Medium ~92 → yellow (not orange).
+PRIORITY_LABEL_COLORS="${PRIORITY_LABEL_COLORS:-Highest:red,High:pink,Medium:yellow,Low:sky,Lowest:blue}"
 
 case "$STATE_MODE" in
   lists|labels) ;;
@@ -502,7 +505,7 @@ if [[ "$STATE_MODE" == "lists" ]]; then
   done < <(jq -r '[.[].state // empty] | unique | .[]' <<<"$desired")
 fi
 
-# Owner names → Trello labels (color from OWNER_LABEL_COLORS; default lime).
+# Owner names → Trello labels (color from OWNER_LABEL_COLORS; default purple).
 # Priority strings → Trello labels (color from PRIORITY_LABEL_COLORS); keep
 # priority: in the description too for Sunsama. Type/team stay description-only.
 # In STATE_MODE=labels, also ensure workflow-state labels.
