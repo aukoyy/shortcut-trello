@@ -286,14 +286,27 @@ echo "$cards"  >"$tmpdir/cards.json"
 echo "$lists"  >"$tmpdir/lists.json"
 echo "$labels" >"$tmpdir/labels.json"
 
-# Index sc-* cards by story id (name must match ^sc-([0-9]+)  with a space)
+# Index managed cards by Shortcut story id.
+# Prefer sc-<digits> in the description (current format); also accept legacy
+# cards whose name starts with "sc-<id> " so the next reconcile can rename
+# them and move the id into the description. Cards with neither marker are
+# never managed (not updated/archived).
 sc_cards=$(jq '
   [.[]
-    | select(.name | test("^sc-[0-9]+ "))
-    | {
-        id: (.name | capture("^sc-(?<id>[0-9]+) ") | .id | tonumber),
-        card: .
-      }
+    | . as $card
+    | (
+        ((.desc // "")
+          | if test("sc-[0-9]+")
+            then (capture("sc-(?<id>[0-9]+)") | .id | tonumber)
+            else empty end)
+        //
+        (.name
+          | if test("^sc-[0-9]+ ")
+            then (capture("^sc-(?<id>[0-9]+) ") | .id | tonumber)
+            else empty end)
+      ) as $id
+    | select($id != null)
+    | { id: $id, card: $card }
   ]
 ' <<<"$cards")
 echo "$sc_cards" >"$tmpdir/sc_cards.json"
@@ -410,14 +423,16 @@ ensure_label() {
   printf '%s' "$id"
 }
 
-# Sunsama-friendly markdown description: link, then each field separated by a
-# blank line (paragraph breaks). Sunsama collapses single \n into one line;
-# double newlines survive import. Empty values become "-".
+# Sunsama-friendly markdown description: link, story id, then each field
+# separated by a blank line (paragraph breaks). Sunsama collapses single \n
+# into one line; double newlines survive import. Empty values become "-".
+# The sc-<id> line is the stable identity for matching/prune (not the title).
 card_desc() {
-  local permalink="$1" type="$2" team="$3" epic="$4" project="$5" requester="$6" priority="$7"
+  local sid="$1" permalink="$2" type="$3" team="$4" epic="$5" project="$6" requester="$7" priority="$8"
   local link_line="[Open in Shortcut](${permalink:--})"
-  printf '%s\n\ntype: %s\n\nteam: %s\n\nepic: %s\n\nproject: %s\n\nrequester: %s\n\npriority: %s' \
+  printf '%s\n\nsc-%s\n\ntype: %s\n\nteam: %s\n\nepic: %s\n\nproject: %s\n\nrequester: %s\n\npriority: %s' \
     "$link_line" \
+    "$sid" \
     "${type:--}" "${team:--}" "${epic:--}" "${project:--}" "${requester:--}" "${priority:--}"
 }
 
@@ -430,9 +445,10 @@ dry_plan() {
   done <<<"$body"
 }
 
+# Card title is the Shortcut story name only (no sc-<id> prefix).
 desired_name() {
-  local id="$1" name="$2"
-  printf 'sc-%s %s' "$id" "$name"
+  local _id="$1" name="$2"
+  printf '%s' "$name"
 }
 
 # Collect unique states / types / teams we need
@@ -487,7 +503,7 @@ for ((i = 0; i < story_count; i++)); do
   sperma=$(jq -r '.permalink // empty' <<<"$story")
 
   want_name="$(desired_name "$sid" "$sname")"
-  want_desc="$(card_desc "$sperma" "$stype" "$steam" "$sepic" "$sproject" "$sreq" "$sprio")"
+  want_desc="$(card_desc "$sid" "$sperma" "$stype" "$steam" "$sepic" "$sproject" "$sreq" "$sprio")"
 
   # Desired labels: owner name(s) only; plus state when STATE_MODE=labels.
   # Type/team are description fields (not labels).
@@ -527,12 +543,12 @@ for ((i = 0; i < story_count; i++)); do
   if [[ -z "$card_id" ]]; then
     # CREATE
     if $DRY_RUN; then
-      echo "would-create: $want_name (list=${want_list_id:-n/a})" >&2
+      echo "would-create: $want_name (sc-$sid, list=${want_list_id:-n/a})" >&2
       dry_plan "labels" "${want_label_names_csv:-none}"
       dry_plan "desc" "$want_desc"
       WOULD_CREATE=$((WOULD_CREATE + 1))
     else
-      echo "create: $want_name" >&2
+      echo "create: $want_name (sc-$sid)" >&2
       create_args=(
         --data-urlencode "name=${want_name}"
         --data-urlencode "desc=${want_desc}"
@@ -601,9 +617,10 @@ for ((i = 0; i < story_count; i++)); do
   change_list=$(IFS=,; echo "${changes[*]}")
   if $DRY_RUN; then
     echo "would-update: sc-$sid ($change_list)" >&2
-    # Show planned desc/labels when those fields would change (no secrets).
+    # Show planned name/desc/labels when those fields would change (no secrets).
     for c in "${changes[@]}"; do
       case "$c" in
+        name)   dry_plan "name" "$want_name" ;;
         labels) dry_plan "labels" "${want_label_names_csv:-none}" ;;
         desc)   dry_plan "desc" "$want_desc" ;;
       esac
@@ -616,7 +633,9 @@ for ((i = 0; i < story_count; i++)); do
   fi
 done
 
-# --- 4) Archive orphan sc-* cards (SAFE_PRUNE) ---
+# --- 4) Archive orphan managed cards (SAFE_PRUNE) ---
+# Only cards identified above (desc sc-<id> and/or legacy name prefix) are
+# candidates. Unmarked cards are never archived or touched.
 orphan_count=$(jq 'length' <<<"$sc_cards")
 for ((i = 0; i < orphan_count; i++)); do
   entry=$(jq -c --argjson i "$i" '.[$i]' <<<"$sc_cards")

@@ -1,6 +1,6 @@
 # Shortcut → Trello mirror
 
-Stateless bash+jq reconciler that mirrors your owned Shortcut stories onto a Trello board as `sc-<id> …` cards.
+Stateless bash+jq reconciler that mirrors your owned Shortcut stories onto a Trello board. Card **titles** are the story name only; the Shortcut id (`sc-<id>`) lives in the **description** (legacy `sc-<id> …` titles are renamed on the next reconcile).
 
 ## Prerequisites
 
@@ -35,15 +35,24 @@ Trello’s Power-Up page shows three different values — do not mix them up:
 Optional:
 
 - `STATE_MODE=lists` (default) — one Trello list per Shortcut workflow state; missing lists are created. `labels` maps state to a label instead.
-- `SAFE_PRUNE=true` (default) — only archive orphan `sc-*` cards whose `dateLastActivity` is before local midnight today.
+- `SAFE_PRUNE=true` (default) — only archive orphan **managed** cards (id in description, or legacy `sc-*` title) whose `dateLastActivity` is before local midnight today.
 - `OWNER_LABEL_COLORS=ryan:green` (default) — comma-separated `name:color` pairs for owner labels. Keys match owner display names case-insensitively as substrings (so `ryan` matches `Ryan`). Unmatched owners use `OWNER_LABEL_COLOR_DEFAULT` (default `blue`).
 
-### Card description & labels
+### Card mapping (name, description, identity)
 
-Each `sc-*` card gets a markdown description shaped for Sunsama (blank line between every field so Sunsama does not flatten single newlines):
+| Field | Value |
+|---|---|
+| **Name** | Shortcut story name only (e.g. `Fix login redirect`) — **not** `sc-49529 Fix login redirect` |
+| **Description** | Markdown link + `sc-<id>` identity line + metadata fields (see below) |
+| **Identity** | Managed cards are matched by `sc-<digits>` in the description. Legacy cards whose **name** starts with `sc-<id> ` are still recognized so the next reconcile can rename them and move the id into the description. |
+| **Prune scope** | Only managed cards (desc marker and/or legacy name prefix) are create/update/archive candidates. Cards with neither marker are never touched. |
+
+Each managed card gets a markdown description shaped for Sunsama (blank line between every field so Sunsama does not flatten single newlines):
 
 ```
 [Open in Shortcut](https://app.shortcut.com/…)
+
+sc-49529
 
 type: …
 
@@ -58,7 +67,7 @@ requester: …
 priority: …
 ```
 
-Empty fields use `-`. Type and team live in the description (not as Trello labels).
+Empty fields use `-`. Type and team live in the description (not as Trello labels). The `sc-<id>` line (after the Shortcut link) is how the reconciler finds the card on later runs.
 
 **Labels:** each story owner name (from Shortcut `owners`) becomes a Trello label. Colors come from `OWNER_LABEL_COLORS` (default: Ryan → `green`; everyone else → `blue`). Existing labels with the wrong color are updated via the Trello API. With `STATE_MODE=lists`, those are the only labels on the card. With `STATE_MODE=labels`, the workflow-state label is kept as well. Updates set `idLabels` to exactly that set (old type/team labels are dropped), so dual-owner cards get both owner labels with correct colors.
 
@@ -70,7 +79,7 @@ Empty fields use `-`. Type and team live in the description (not as Trello label
 ./reconcile.sh --dry-run
 ```
 
-Prints would-create / would-update / would-archive actions without writing to Trello. For creates and desc/label updates, also prints the planned **label names** and full **description** (no API secrets). Exit non-zero on API failure.
+Prints would-create / would-update / would-archive actions without writing to Trello. For creates and name/desc/label updates, also prints the planned **name**, **label names**, and full **description** (no API secrets). Exit non-zero on API failure.
 
 ## Real run
 
@@ -78,7 +87,7 @@ Prints would-create / would-update / would-archive actions without writing to Tr
 ./reconcile.sh
 ```
 
-Idempotent: creates missing `sc-*` cards, updates changed fields only, archives orphan `sc-*` cards (subject to `SAFE_PRUNE`). Never touches non-`sc-*` cards; never hard-deletes.
+Idempotent: creates missing managed cards, updates changed fields only (including renaming legacy `sc-<id> …` titles and ensuring the id is in the description), archives orphan managed cards (subject to `SAFE_PRUNE`). Never touches unmarked cards; never hard-deletes.
 
 Summary line: `created=… updated=… archived=… skipped=…` (or `would-*` under `--dry-run`).
 
