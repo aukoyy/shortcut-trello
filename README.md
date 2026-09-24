@@ -36,6 +36,7 @@ Optional:
 
 - `STATE_MODE=lists` (default) — one Trello list per Shortcut workflow state; missing lists are created. `labels` maps state to a label instead.
 - `SAFE_PRUNE=true` (default) — only archive orphan `sc-*` cards whose `dateLastActivity` is before local midnight today.
+- `OWNER_LABEL_COLORS=ryan:green` (default) — comma-separated `name:color` pairs for owner labels. Keys match owner display names case-insensitively as substrings (so `ryan` matches `Ryan`). Unmatched owners use `OWNER_LABEL_COLOR_DEFAULT` (default `blue`).
 
 ### Card description & labels
 
@@ -54,7 +55,7 @@ priority: …
 
 Empty fields use `-`. Type and team live in the description (not as Trello labels).
 
-**Labels:** each story owner name (from Shortcut `owners`) becomes a Trello label, color `blue`. With `STATE_MODE=lists`, those are the only labels on the card. With `STATE_MODE=labels`, the workflow-state label is kept as well. Updates set `idLabels` to exactly that set (old type/team labels are dropped).
+**Labels:** each story owner name (from Shortcut `owners`) becomes a Trello label. Colors come from `OWNER_LABEL_COLORS` (default: Ryan → `green`; everyone else → `blue`). Existing labels with the wrong color are updated via the Trello API. With `STATE_MODE=lists`, those are the only labels on the card. With `STATE_MODE=labels`, the workflow-state label is kept as well. Updates set `idLabels` to exactly that set (old type/team labels are dropped), so dual-owner cards get both owner labels with correct colors.
 
 `.env` is gitignored; keep secrets out of commits.
 

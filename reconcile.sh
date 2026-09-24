@@ -43,6 +43,10 @@ fi
 
 STATE_MODE="${STATE_MODE:-lists}"
 SAFE_PRUNE="${SAFE_PRUNE:-true}"
+# Comma-separated name:color pairs; keys match owner display names case-insensitively
+# as substrings (so "ryan" matches "Ryan", "Ryan Smith", etc.). Unmatched → default.
+OWNER_LABEL_COLORS="${OWNER_LABEL_COLORS:-ryan:green}"
+OWNER_LABEL_COLOR_DEFAULT="${OWNER_LABEL_COLOR_DEFAULT:-blue}"
 
 case "$STATE_MODE" in
   lists|labels) ;;
@@ -51,6 +55,29 @@ case "$STATE_MODE" in
     exit 1
     ;;
 esac
+
+# Resolve Trello label color for a Shortcut owner display name.
+owner_label_color() {
+  local name="$1"
+  local name_lc pair key color key_lc
+  name_lc=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+  local IFS=','
+  set -f
+  # shellcheck disable=SC2086
+  for pair in $OWNER_LABEL_COLORS; do
+    key="${pair%%:*}"
+    color="${pair#*:}"
+    [[ -z "$key" || "$key" == "$pair" || -z "$color" ]] && continue
+    key_lc=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
+    if [[ "$name_lc" == *"$key_lc"* ]]; then
+      set +f
+      printf '%s' "$color"
+      return 0
+    fi
+  done
+  set +f
+  printf '%s' "$OWNER_LABEL_COLOR_DEFAULT"
+}
 
 SC_API="https://api.app.shortcut.com/api/v3"
 TR_API="https://api.trello.com/1"
@@ -322,6 +349,7 @@ ensure_list() {
 
 # Create label if missing; print id.
 # Optional 2nd arg: preferred Trello color (e.g. blue for owners).
+# If the label exists with a different color and a preferred color is set, update it.
 # Otherwise color cycles through a fixed palette (Trello requires a color).
 ensure_label() {
   local name="$1"
@@ -330,6 +358,28 @@ ensure_label() {
   local id
   id="$(find_label_id "$name")"
   if [[ -n "$id" ]]; then
+    if [[ -n "$preferred_color" ]]; then
+      local cur_color
+      cur_color=$(jq -r --arg id "$id" \
+        '[.[] | select(.id == $id)] | first | .color // empty' <<<"$labels_json")
+      if [[ "$cur_color" != "$preferred_color" ]]; then
+        echo "  ensure-label-color: '$name' ${cur_color:-none}→${preferred_color}" >&2
+        if $DRY_RUN; then
+          labels_json=$(jq --arg id "$id" --arg c "$preferred_color" \
+            'map(if .id == $id then .color = $c else . end)' <<<"$labels_json")
+        else
+          local updated
+          updated=$(tr_put "/labels/${id}" --data-urlencode "color=${preferred_color}")
+          if [[ -n "$updated" ]]; then
+            labels_json=$(jq --arg id "$id" --argjson u "$updated" \
+              'map(if .id == $id then $u else . end)' <<<"$labels_json")
+          else
+            labels_json=$(jq --arg id "$id" --arg c "$preferred_color" \
+              'map(if .id == $id then .color = $c else . end)' <<<"$labels_json")
+          fi
+        fi
+      fi
+    fi
     printf '%s' "$id"
     return 0
   fi
@@ -394,11 +444,12 @@ if [[ "$STATE_MODE" == "lists" ]]; then
   done < <(jq -r '[.[].state // empty] | unique | .[]' <<<"$desired")
 fi
 
-# Owner names → Trello labels (blue). Type/team go in the description, not labels.
+# Owner names → Trello labels (color from OWNER_LABEL_COLORS; default blue).
+# Type/team go in the description, not labels.
 # In STATE_MODE=labels, also ensure workflow-state labels.
 while IFS= read -r lbl; do
   [[ -z "$lbl" || "$lbl" == "null" ]] && continue
-  ensure_label "$lbl" "blue" >/dev/null
+  ensure_label "$lbl" "$(owner_label_color "$lbl")" >/dev/null
 done < <(jq -r '[.[].owners[]?] | unique | .[]' <<<"$desired")
 
 if [[ "$STATE_MODE" == "labels" ]]; then
@@ -443,7 +494,7 @@ for ((i = 0; i < story_count; i++)); do
   want_label_names=()
   while IFS= read -r owner; do
     [[ -z "$owner" || "$owner" == "null" ]] && continue
-    lid="$(ensure_label "$owner" "blue")"
+    lid="$(ensure_label "$owner" "$(owner_label_color "$owner")")"
     if [[ -n "$lid" ]]; then
       want_label_ids+=("$lid")
       want_label_names+=("$owner")
