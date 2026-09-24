@@ -410,12 +410,13 @@ ensure_label() {
   printf '%s' "$id"
 }
 
-# Sunsama-friendly markdown description: link, blank line, then one field per line.
-# Empty values become "-".
+# Sunsama-friendly markdown description: link, then each field separated by a
+# blank line (paragraph breaks). Sunsama collapses single \n into one line;
+# double newlines survive import. Empty values become "-".
 card_desc() {
   local permalink="$1" type="$2" team="$3" epic="$4" project="$5" requester="$6" priority="$7"
   local link_line="[Open in Shortcut](${permalink:--})"
-  printf '%s\n\ntype: %s\nteam: %s\nepic: %s\nproject: %s\nrequester: %s\npriority: %s' \
+  printf '%s\n\ntype: %s\n\nteam: %s\n\nepic: %s\n\nproject: %s\n\nrequester: %s\n\npriority: %s' \
     "$link_line" \
     "${type:--}" "${team:--}" "${epic:--}" "${project:--}" "${requester:--}" "${priority:--}"
 }

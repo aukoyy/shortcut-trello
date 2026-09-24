@@ -40,16 +40,21 @@ Optional:
 
 ### Card description & labels
 
-Each `sc-*` card gets a markdown description shaped for Sunsama:
+Each `sc-*` card gets a markdown description shaped for Sunsama (blank line between every field so Sunsama does not flatten single newlines):
 
 ```
 [Open in Shortcut](https://app.shortcut.com/…)
 
 type: …
+
 team: …
+
 epic: …
+
 project: …
+
 requester: …
+
 priority: …
 ```
 
