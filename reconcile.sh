@@ -208,7 +208,7 @@ epics=$(sc_get /epics)
 cfields=$(sc_get /custom-fields)
 stories=$(sc_post /stories/search "{\"owner_id\": \"${SHORTCUT_OWNER_ID}\", \"archived\": false}")
 
-# Field-resolution jq must match shortcut-stories.sh AS-IS (plus owners unused by Trello).
+# Field-resolution jq must match shortcut-stories.sh AS-IS (owners become Trello labels).
 desired=$(jq -n \
   --argjson stories   "$stories" \
   --argjson members   "$members" \
@@ -320,10 +320,12 @@ ensure_list() {
   printf '%s' "$id"
 }
 
-# Create label if missing; print id
-# color cycles through a fixed palette (Trello requires a color)
+# Create label if missing; print id.
+# Optional 2nd arg: preferred Trello color (e.g. blue for owners).
+# Otherwise color cycles through a fixed palette (Trello requires a color).
 ensure_label() {
   local name="$1"
+  local preferred_color="${2:-}"
   [[ -z "$name" || "$name" == "null" ]] && { printf ''; return 0; }
   local id
   id="$(find_label_id "$name")"
@@ -331,10 +333,15 @@ ensure_label() {
     printf '%s' "$id"
     return 0
   fi
-  local colors=(blue green orange red purple yellow sky lime pink black)
-  local color_idx
-  color_idx=$(jq -rn --arg n "$name" '($n | explode | add) % 10')
-  local color="${colors[$color_idx]}"
+  local color
+  if [[ -n "$preferred_color" ]]; then
+    color="$preferred_color"
+  else
+    local colors=(blue green orange red purple yellow sky lime pink black)
+    local color_idx
+    color_idx=$(jq -rn --arg n "$name" '($n | explode | add) % 10')
+    color="${colors[$color_idx]}"
+  fi
   echo "  ensure-label: '$name' ($color)" >&2
   if $DRY_RUN; then
     id="dry-label-$(ue "$name")"
@@ -353,10 +360,23 @@ ensure_label() {
   printf '%s' "$id"
 }
 
+# Sunsama-friendly markdown description: link, blank line, then one field per line.
+# Empty values become "-".
 card_desc() {
-  local permalink="$1" epic="$2" project="$3" requester="$4" priority="$5"
-  printf '%s\nepic: %s\nproject: %s\nrequester: %s\npriority: %s' \
-    "$permalink" "${epic:--}" "${project:--}" "${requester:--}" "${priority:--}"
+  local permalink="$1" type="$2" team="$3" epic="$4" project="$5" requester="$6" priority="$7"
+  local link_line="[Open in Shortcut](${permalink:--})"
+  printf '%s\n\ntype: %s\nteam: %s\nepic: %s\nproject: %s\nrequester: %s\npriority: %s' \
+    "$link_line" \
+    "${type:--}" "${team:--}" "${epic:--}" "${project:--}" "${requester:--}" "${priority:--}"
+}
+
+# Indent a multi-line plan block for --dry-run (stderr).
+dry_plan() {
+  local title="$1" body="$2"
+  echo "  $title:" >&2
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    echo "    $line" >&2
+  done <<<"$body"
 }
 
 desired_name() {
@@ -374,15 +394,19 @@ if [[ "$STATE_MODE" == "lists" ]]; then
   done < <(jq -r '[.[].state // empty] | unique | .[]' <<<"$desired")
 fi
 
-# Always ensure type + team labels; in labels mode also state
+# Owner names → Trello labels (blue). Type/team go in the description, not labels.
+# In STATE_MODE=labels, also ensure workflow-state labels.
 while IFS= read -r lbl; do
   [[ -z "$lbl" || "$lbl" == "null" ]] && continue
-  ensure_label "$lbl" >/dev/null
-done < <(jq -r '
-  [.[].type // empty, .[].team // empty]
-  + (if $mode == "labels" then [.[].state // empty] else [] end)
-  | unique | .[]
-' --arg mode "$STATE_MODE" <<<"$desired")
+  ensure_label "$lbl" "blue" >/dev/null
+done < <(jq -r '[.[].owners[]?] | unique | .[]' <<<"$desired")
+
+if [[ "$STATE_MODE" == "labels" ]]; then
+  while IFS= read -r lbl; do
+    [[ -z "$lbl" || "$lbl" == "null" ]] && continue
+    ensure_label "$lbl" >/dev/null
+  done < <(jq -r '[.[].state // empty] | unique | .[]' <<<"$desired")
+fi
 
 # Persist ensured indexes
 echo "$lists_json"  >"$tmpdir/lists.json"
@@ -411,22 +435,31 @@ for ((i = 0; i < story_count; i++)); do
   sperma=$(jq -r '.permalink // empty' <<<"$story")
 
   want_name="$(desired_name "$sid" "$sname")"
-  want_desc="$(card_desc "$sperma" "$sepic" "$sproject" "$sreq" "$sprio")"
+  want_desc="$(card_desc "$sperma" "$stype" "$steam" "$sepic" "$sproject" "$sreq" "$sprio")"
 
-  # Desired label ids (type, team, and state if labels mode)
+  # Desired labels: owner name(s) only; plus state when STATE_MODE=labels.
+  # Type/team are description fields (not labels).
   want_label_ids=()
-  for lbl in "$stype" "$steam"; do
-    [[ -z "$lbl" || "$lbl" == "null" ]] && continue
-    lid="$(ensure_label "$lbl")"
-    [[ -n "$lid" ]] && want_label_ids+=("$lid")
-  done
+  want_label_names=()
+  while IFS= read -r owner; do
+    [[ -z "$owner" || "$owner" == "null" ]] && continue
+    lid="$(ensure_label "$owner" "blue")"
+    if [[ -n "$lid" ]]; then
+      want_label_ids+=("$lid")
+      want_label_names+=("$owner")
+    fi
+  done < <(jq -r '.owners[]?' <<<"$story")
   if [[ "$STATE_MODE" == "labels" && -n "$sstate" && "$sstate" != "null" ]]; then
     lid="$(ensure_label "$sstate")"
-    [[ -n "$lid" ]] && want_label_ids+=("$lid")
+    if [[ -n "$lid" ]]; then
+      want_label_ids+=("$lid")
+      want_label_names+=("$sstate")
+    fi
   fi
 
-  # Dedupe label ids
-  want_labels_csv=$(printf '%s\n' "${want_label_ids[@]:-}" | awk 'NF' | sort -u | paste -s -d ',' -)
+  # Dedupe label ids / names (stable for compare + dry-run display)
+  want_labels_csv=$(printf '%s\n' "${want_label_ids[@]:-}" | awk 'NF' | sort -u | paste -sd ',' -)
+  want_label_names_csv=$(printf '%s\n' "${want_label_names[@]:-}" | awk 'NF' | sort -u | paste -sd ',' - | sed 's/,/, /g')
 
   want_list_id=""
   if [[ "$STATE_MODE" == "lists" ]]; then
@@ -442,7 +475,9 @@ for ((i = 0; i < story_count; i++)); do
   if [[ -z "$card_id" ]]; then
     # CREATE
     if $DRY_RUN; then
-      echo "would-create: $want_name (list=${want_list_id:-n/a} labels=${want_labels_csv:-none})" >&2
+      echo "would-create: $want_name (list=${want_list_id:-n/a})" >&2
+      dry_plan "labels" "${want_label_names_csv:-none}"
+      dry_plan "desc" "$want_desc"
       WOULD_CREATE=$((WOULD_CREATE + 1))
     else
       echo "create: $want_name" >&2
@@ -477,7 +512,7 @@ for ((i = 0; i < story_count; i++)); do
   cur_desc=$(jq -r '.desc // ""' <<<"$card")
   cur_list=$(jq -r '.idList' <<<"$card")
   cur_labels=$(jq -r '[.idLabels[]] | sort | join(",")' <<<"$card")
-  want_labels_sorted=$(printf '%s\n' "${want_label_ids[@]:-}" | awk 'NF' | sort -u | paste -s -d ',' -)
+  want_labels_sorted=$(printf '%s\n' "${want_label_ids[@]:-}" | awk 'NF' | sort -u | paste -sd ',' -)
 
   put_args=()
   changes=()
@@ -514,6 +549,13 @@ for ((i = 0; i < story_count; i++)); do
   change_list=$(IFS=,; echo "${changes[*]}")
   if $DRY_RUN; then
     echo "would-update: sc-$sid ($change_list)" >&2
+    # Show planned desc/labels when those fields would change (no secrets).
+    for c in "${changes[@]}"; do
+      case "$c" in
+        labels) dry_plan "labels" "${want_label_names_csv:-none}" ;;
+        desc)   dry_plan "desc" "$want_desc" ;;
+      esac
+    done
     WOULD_UPDATE=$((WOULD_UPDATE + 1))
   else
     echo "update: sc-$sid ($change_list)" >&2
