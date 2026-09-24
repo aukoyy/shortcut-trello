@@ -36,7 +36,8 @@ Optional:
 
 - `STATE_MODE=lists` (default) — one Trello list per Shortcut workflow state; missing lists are created. `labels` maps state to a label instead.
 - `SAFE_PRUNE=true` (default) — only archive orphan **managed** cards (id in description, or legacy `sc-*` title) whose `dateLastActivity` is before local midnight today.
-- `OWNER_LABEL_COLORS=ryan:green` (default) — comma-separated `name:color` pairs for owner labels. Keys match owner display names case-insensitively as substrings (so `ryan` matches `Ryan`). Unmatched owners use `OWNER_LABEL_COLOR_DEFAULT` (default `blue`).
+- `OWNER_LABEL_COLORS=ryan:green,øyvind:purple,oyvind:purple` (default) — comma-separated `name:color` pairs for owner labels. Keys match owner display names case-insensitively as substrings (`ryan` → Ryan, `oyvind`/`øyvind` → Øyvind). Unmatched owners use `OWNER_LABEL_COLOR_DEFAULT` (default `lime`, so they don’t collide with priority colors).
+- `PRIORITY_LABEL_COLORS=Highest:red,High:pink,Medium:orange,Low:sky,Lowest:blue` (default) — maps Shortcut priority strings to Trello label colors (closest to Shortcut UI). None / empty / `-` → no priority label. The `priority:` line stays in the description for Sunsama either way.
 
 ### Card mapping (name, description, identity)
 
@@ -69,7 +70,15 @@ priority: …
 
 Empty fields use `-`. Type and team live in the description (not as Trello labels). The `sc-<id>` line (after the Shortcut link) is how the reconciler finds the card on later runs.
 
-**Labels:** each story owner name (from Shortcut `owners`) becomes a Trello label. Colors come from `OWNER_LABEL_COLORS` (default: Ryan → `green`; everyone else → `blue`). Existing labels with the wrong color are updated via the Trello API. With `STATE_MODE=lists`, those are the only labels on the card. With `STATE_MODE=labels`, the workflow-state label is kept as well. Updates set `idLabels` to exactly that set (old type/team labels are dropped), so dual-owner cards get both owner labels with correct colors.
+**Labels:**
+
+| Kind | Source | Default colors |
+|---|---|---|
+| **Owner** | Shortcut `owners` display names | Ryan → `green`; Øyvind → `purple`; other owners → `lime` |
+| **Priority** | Shortcut priority custom field | Highest → `red`; High → `pink`; Medium → `orange`; Low → `sky`; Lowest → `blue`; None/empty/`-` → no label |
+| **State** | Workflow state | Only when `STATE_MODE=labels` |
+
+Priority is kept in the description **and** attached as a label (when set). Existing labels with the wrong color are updated via the Trello API. Updates set `idLabels` to exactly that set (old type/team labels are dropped), so dual-owner cards get both owner labels plus the priority label with correct colors.
 
 `.env` is gitignored; keep secrets out of commits.
 

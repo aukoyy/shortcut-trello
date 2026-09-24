@@ -45,8 +45,12 @@ STATE_MODE="${STATE_MODE:-lists}"
 SAFE_PRUNE="${SAFE_PRUNE:-true}"
 # Comma-separated name:color pairs; keys match owner display names case-insensitively
 # as substrings (so "ryan" matches "Ryan", "Ryan Smith", etc.). Unmatched → default.
-OWNER_LABEL_COLORS="${OWNER_LABEL_COLORS:-ryan:green}"
-OWNER_LABEL_COLOR_DEFAULT="${OWNER_LABEL_COLOR_DEFAULT:-blue}"
+# Defaults avoid priority-label colors (red/pink/orange/sky/blue).
+OWNER_LABEL_COLORS="${OWNER_LABEL_COLORS:-ryan:green,øyvind:purple,oyvind:purple}"
+OWNER_LABEL_COLOR_DEFAULT="${OWNER_LABEL_COLOR_DEFAULT:-lime}"
+# Priority → Trello label colors (closest to Shortcut UI). Keys match priority
+# strings case-insensitively (exact). None / empty / "-" → no priority label.
+PRIORITY_LABEL_COLORS="${PRIORITY_LABEL_COLORS:-Highest:red,High:pink,Medium:orange,Low:sky,Lowest:blue}"
 
 case "$STATE_MODE" in
   lists|labels) ;;
@@ -60,7 +64,8 @@ esac
 owner_label_color() {
   local name="$1"
   local name_lc pair key color key_lc
-  name_lc=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+  # Normalize ø/Ø → o so "oyvind" matches "Øyvind" even if locale mishandles case.
+  name_lc=$(printf '%s' "$name" | sed 's/[Øø]/o/g' | tr '[:upper:]' '[:lower:]')
   local IFS=','
   set -f
   # shellcheck disable=SC2086
@@ -68,7 +73,7 @@ owner_label_color() {
     key="${pair%%:*}"
     color="${pair#*:}"
     [[ -z "$key" || "$key" == "$pair" || -z "$color" ]] && continue
-    key_lc=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
+    key_lc=$(printf '%s' "$key" | sed 's/[Øø]/o/g' | tr '[:upper:]' '[:lower:]')
     if [[ "$name_lc" == *"$key_lc"* ]]; then
       set +f
       printf '%s' "$color"
@@ -77,6 +82,42 @@ owner_label_color() {
   done
   set +f
   printf '%s' "$OWNER_LABEL_COLOR_DEFAULT"
+}
+
+# True if priority should get a Trello label (skip None / empty / "-").
+priority_has_label() {
+  local p="$1"
+  [[ -z "$p" || "$p" == "null" || "$p" == "-" ]] && return 1
+  local p_lc
+  p_lc=$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')
+  [[ "$p_lc" == "none" ]] && return 1
+  return 0
+}
+
+# Resolve Trello label color for a Shortcut priority string (exact, case-insensitive).
+# Prints empty if priority has no label or is unmapped (caller skips attachment).
+priority_label_color() {
+  local prio="$1"
+  priority_has_label "$prio" || { printf ''; return 0; }
+  local prio_lc pair key color key_lc
+  prio_lc=$(printf '%s' "$prio" | tr '[:upper:]' '[:lower:]')
+  local IFS=','
+  set -f
+  # shellcheck disable=SC2086
+  for pair in $PRIORITY_LABEL_COLORS; do
+    key="${pair%%:*}"
+    color="${pair#*:}"
+    [[ -z "$key" || "$key" == "$pair" || -z "$color" ]] && continue
+    key_lc=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
+    if [[ "$prio_lc" == "$key_lc" ]]; then
+      set +f
+      printf '%s' "$color"
+      return 0
+    fi
+  done
+  set +f
+  # Unmapped priority string: still create a label; cycle color via ensure_label.
+  printf ''
 }
 
 SC_API="https://api.app.shortcut.com/api/v3"
@@ -461,13 +502,20 @@ if [[ "$STATE_MODE" == "lists" ]]; then
   done < <(jq -r '[.[].state // empty] | unique | .[]' <<<"$desired")
 fi
 
-# Owner names → Trello labels (color from OWNER_LABEL_COLORS; default blue).
-# Type/team go in the description, not labels.
+# Owner names → Trello labels (color from OWNER_LABEL_COLORS; default lime).
+# Priority strings → Trello labels (color from PRIORITY_LABEL_COLORS); keep
+# priority: in the description too for Sunsama. Type/team stay description-only.
 # In STATE_MODE=labels, also ensure workflow-state labels.
 while IFS= read -r lbl; do
   [[ -z "$lbl" || "$lbl" == "null" ]] && continue
   ensure_label "$lbl" "$(owner_label_color "$lbl")" >/dev/null
 done < <(jq -r '[.[].owners[]?] | unique | .[]' <<<"$desired")
+
+while IFS= read -r lbl; do
+  [[ -z "$lbl" || "$lbl" == "null" ]] && continue
+  priority_has_label "$lbl" || continue
+  ensure_label "$lbl" "$(priority_label_color "$lbl")" >/dev/null
+done < <(jq -r '[.[].priority // empty] | unique | .[]' <<<"$desired")
 
 if [[ "$STATE_MODE" == "labels" ]]; then
   while IFS= read -r lbl; do
@@ -505,8 +553,9 @@ for ((i = 0; i < story_count; i++)); do
   want_name="$(desired_name "$sid" "$sname")"
   want_desc="$(card_desc "$sid" "$sperma" "$stype" "$steam" "$sepic" "$sproject" "$sreq" "$sprio")"
 
-  # Desired labels: owner name(s) only; plus state when STATE_MODE=labels.
-  # Type/team are description fields (not labels).
+  # Desired labels: owner name(s) + priority (when set); plus state when
+  # STATE_MODE=labels. Type/team are description fields (not labels).
+  # priority: stays in the description for Sunsama as well.
   want_label_ids=()
   want_label_names=()
   while IFS= read -r owner; do
@@ -517,6 +566,13 @@ for ((i = 0; i < story_count; i++)); do
       want_label_names+=("$owner")
     fi
   done < <(jq -r '.owners[]?' <<<"$story")
+  if priority_has_label "$sprio"; then
+    lid="$(ensure_label "$sprio" "$(priority_label_color "$sprio")")"
+    if [[ -n "$lid" ]]; then
+      want_label_ids+=("$lid")
+      want_label_names+=("$sprio")
+    fi
+  fi
   if [[ "$STATE_MODE" == "labels" && -n "$sstate" && "$sstate" != "null" ]]; then
     lid="$(ensure_label "$sstate")"
     if [[ -n "$lid" ]]; then
