@@ -85,14 +85,14 @@ export SHORTCUT_API_TOKEN=…
 ./shortcut-stories.sh <owner-uuid> --tsv    # TSV
 ```
 
-## Scheduling (launchd, every 15 minutes)
+## Scheduling (launchd, every 5 minutes)
 
-A user LaunchAgent runs a **real** reconcile (not dry-run) every **15 minutes** while the Mac is on and you are logged in. Label: `com.aukoyy.shortcut-trello-reconcile`.
+A user LaunchAgent runs a **real** reconcile (not dry-run) every **5 minutes** while the Mac is on and you are logged in. Label: `com.aukoyy.shortcut-trello-reconcile`.
 
 | | |
 |---|---|
 | **Label** | `com.aukoyy.shortcut-trello-reconcile` |
-| **Interval** | 900s (`StartInterval`) — while Mac is on / logged in |
+| **Interval** | 300s (`StartInterval`) — while Mac is on / logged in |
 | **Repo plist** | `launchd/com.aukoyy.shortcut-trello-reconcile.plist` |
 | **Install path** | `~/Library/LaunchAgents/com.aukoyy.shortcut-trello-reconcile.plist` |
 | **Logs** | `~/Library/Logs/shortcut-trello-reconcile.log` |

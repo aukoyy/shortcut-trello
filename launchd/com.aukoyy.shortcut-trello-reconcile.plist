@@ -14,9 +14,9 @@
 		<string>/Users/aukoyy/code/projects/shortcut-trello/reconcile.sh</string>
 	</array>
 
-	<!-- Every 15 minutes -->
+	<!-- Every 5 minutes -->
 	<key>StartInterval</key>
-	<integer>900</integer>
+	<integer>300</integer>
 
 	<!-- Run once when the agent is loaded (in addition to the interval) -->
 	<key>RunAtLoad</key>
