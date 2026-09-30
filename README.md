@@ -44,14 +44,14 @@ Optional:
 | Field | Value |
 |---|---|
 | **Name** | Shortcut story name only (e.g. `Fix login redirect`) — **not** `sc-49529 Fix login redirect` |
-| **Description** | Bare Shortcut permalink + `sc-<id>` identity line + metadata fields (see below) |
+| **Description** | HTML `<a href="…">Open in Shortcut</a>` + `sc-<id>` identity line + metadata fields (see below) |
 | **Identity** | Managed cards are matched by `sc-<digits>` in the description. Legacy cards whose **name** starts with `sc-<id> ` are still recognized so the next reconcile can rename them and move the id into the description. |
 | **Prune scope** | Only managed cards (desc marker and/or legacy name prefix) are create/update/archive candidates. Cards with neither marker are never touched. |
 
-Each managed card gets a description shaped for Sunsama (blank line between every field so Sunsama does not flatten single newlines). The Shortcut link is a **bare URL on its own line** — not `[Open in Shortcut](url)` — because markdown plus auto-linkify of the same URL opens two tabs when clicked in Sunsama:
+Each managed card gets a description shaped for Sunsama (blank line between every field so Sunsama does not flatten single newlines). The Shortcut link is an **HTML anchor only** on the first line:
 
 ```
-https://app.shortcut.com/…
+<a href="https://app.shortcut.com/…">Open in Shortcut</a>
 
 sc-49529
 
@@ -68,7 +68,15 @@ requester: …
 priority: …
 ```
 
-Empty fields use `-`. Type and team live in the description (not as Trello labels). The `sc-<id>` line (after the Shortcut URL) is how the reconciler finds the card on later runs.
+**Link format trial (Sunsama click behavior):**
+
+| Form | Result |
+|---|---|
+| `[Open in Shortcut](url)` markdown | Labeled, but **two tabs** (markdown hyperlink + auto-linkify) |
+| Bare `https://…` URL | **One tab**, but plain unlabeled URL |
+| `<a href="…">Open in Shortcut</a>` HTML | Current trial — labeled hyperlink if Sunsama/Trello render HTML; may show raw tags if Trello escapes it |
+
+Empty fields use `-`. Type and team live in the description (not as Trello labels). The `sc-<id>` line (after the Shortcut link) is how the reconciler finds the card on later runs.
 
 **Labels:**
 
