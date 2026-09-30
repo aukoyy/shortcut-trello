@@ -488,34 +488,36 @@ ensure_label() {
   printf '%s' "$id"
 }
 
-# Display name for the managed Shortcut permalink attachment on each card.
+# Former managed attachment name. We no longer create these — Sunsama does not
+# import Trello attachments — but cleanup still deletes leftovers by this name.
 SHORTCUT_ATTACHMENT_NAME="Open in Shortcut"
 
-# Sunsama-friendly description: sc-<id> first, then each field separated by a
-# blank line (paragraph breaks). No Shortcut URL / markdown / HTML in the
-# description — Sunsama double-opens markdown links, shows raw HTML for <a>,
-# and bare URLs are unlabeled. The labeled link is a Trello attachment instead.
-# Empty values become "-". The sc-<id> line is identity for matching/prune.
+# Sunsama-friendly description: bare Shortcut permalink first (one tab,
+# auto-linked), then blank line, sc-<id>, then each field separated by a blank
+# line. No markdown / HTML — Sunsama double-opens markdown links and shows raw
+# HTML for <a>. Attachments are not imported into Sunsama, so the bare URL is
+# the workable compromise. Empty values become "-". The sc-<id> line is
+# identity for matching/prune.
 card_desc() {
-  local sid="$1" _permalink="$2" type="$3" team="$4" epic="$5" project="$6" requester="$7" priority="$8"
-  printf 'sc-%s\n\ntype: %s\n\nteam: %s\n\nepic: %s\n\nproject: %s\n\nrequester: %s\n\npriority: %s' \
+  local sid="$1" permalink="$2" type="$3" team="$4" epic="$5" project="$6" requester="$7" priority="$8"
+  local link_line="${permalink:--}"
+  printf '%s\n\nsc-%s\n\ntype: %s\n\nteam: %s\n\nepic: %s\n\nproject: %s\n\nrequester: %s\n\npriority: %s' \
+    "$link_line" \
     "$sid" \
     "${type:--}" "${team:--}" "${epic:--}" "${project:--}" "${requester:--}" "${priority:--}"
 }
 
-# Ensure exactly one URL attachment named "Open in Shortcut" with the story
-# permalink. Idempotent: create if missing, update URL/name if wrong, delete
-# duplicate managed attachments. Prints a short action verb on stdout when a
-# change is needed (create|update|dedupe); prints nothing when already correct.
-# Returns 0 always (API failures exit via http helpers). Dry-run only logs.
-ensure_shortcut_attachment() {
-  local card_id="$1" permalink="$2"
-  if [[ -z "$card_id" || -z "$permalink" ]]; then
+# Delete leftover "Open in Shortcut" link attachments from a prior approach.
+# Idempotent: prints "delete" (or "delete-N") on stdout when any are removed;
+# prints nothing when already clean. Never creates attachments. Dry-run only
+# reports. Returns 0 always (API failures exit via http helpers).
+cleanup_shortcut_attachments() {
+  local card_id="$1"
+  if [[ -z "$card_id" ]]; then
     return 0
   fi
 
   local atts
-  # Always read (even in dry-run) so we can report would-ensure accurately.
   local body_file status
   body_file="$(mktemp "$tmpdir/tr.XXXXXX")"
   status="$(curl -sS -o "$body_file" -w "%{http_code}" -G \
@@ -530,76 +532,30 @@ ensure_shortcut_attachment() {
   fi
   atts="$(cat "$body_file")"
 
-  # Managed = our display name, or a non-upload URL attachment pointing at this permalink.
-  local managed keep_id keep_name keep_url extras
-  managed=$(jq -c --arg name "$SHORTCUT_ATTACHMENT_NAME" --arg url "$permalink" '
-    [.[]
-      | select(
-          (.name == $name)
-          or ((.isUpload | not) and (.url == $url))
-        )
-    ]' <<<"$atts")
+  local ids count
+  ids=$(jq -r --arg name "$SHORTCUT_ATTACHMENT_NAME" \
+    '[.[] | select(.name == $name) | .id] | .[]' <<<"$atts")
+  count=$(jq -r --arg name "$SHORTCUT_ATTACHMENT_NAME" \
+    '[.[] | select(.name == $name)] | length' <<<"$atts")
 
-  keep_id=$(jq -r --arg name "$SHORTCUT_ATTACHMENT_NAME" --arg url "$permalink" '
-    (
-      ([.[] | select(.name == $name and .url == $url)] | first)
-      // ([.[] | select(.name == $name)] | first)
-      // ([.[] | select(.url == $url)] | first)
-      // empty
-    ) | .id // empty
-  ' <<<"$managed")
-
-  if [[ -z "$keep_id" ]]; then
-    echo "create"
-    if $DRY_RUN; then
-      return 0
-    fi
-    tr_post "/cards/${card_id}/attachments" \
-      --data-urlencode "name=${SHORTCUT_ATTACHMENT_NAME}" \
-      --data-urlencode "url=${permalink}" >/dev/null
+  if [[ "$count" -eq 0 || -z "$ids" ]]; then
     return 0
   fi
 
-  keep_name=$(jq -r --arg id "$keep_id" '.[] | select(.id == $id) | .name' <<<"$managed")
-  keep_url=$(jq -r --arg id "$keep_id" '.[] | select(.id == $id) | .url' <<<"$managed")
-  extras=$(jq -r --arg id "$keep_id" '[.[] | select(.id != $id) | .id] | .[]' <<<"$managed")
-
-  local action=""
-  if [[ "$keep_name" != "$SHORTCUT_ATTACHMENT_NAME" || "$keep_url" != "$permalink" ]]; then
-    action="update"
-    if ! $DRY_RUN; then
-      # Undocumented but works for link attachments: PUT name + url.
-      # If it fails, delete+create below as fallback.
-      local put_body put_status put_file
-      put_file="$(mktemp "$tmpdir/tr.XXXXXX")"
-      put_status="$(curl -sS -o "$put_file" -w "%{http_code}" -X PUT \
-        --data-urlencode "key=${TRELLO_KEY}" \
-        --data-urlencode "token=${TRELLO_TOKEN}" \
-        --data-urlencode "name=${SHORTCUT_ATTACHMENT_NAME}" \
-        --data-urlencode "url=${permalink}" \
-        "${TR_API}/cards/${card_id}/attachments/${keep_id}")" || put_status="000"
-      if [[ "$put_status" != 2* ]]; then
-        tr_delete "/cards/${card_id}/attachments/${keep_id}" >/dev/null
-        tr_post "/cards/${card_id}/attachments" \
-          --data-urlencode "name=${SHORTCUT_ATTACHMENT_NAME}" \
-          --data-urlencode "url=${permalink}" >/dev/null
-      fi
-    fi
+  if [[ "$count" -eq 1 ]]; then
+    echo "delete"
+  else
+    echo "delete-${count}"
   fi
 
-  if [[ -n "$extras" ]]; then
-    action="${action:-dedupe}"
-    if ! $DRY_RUN; then
-      while IFS= read -r extra_id; do
-        [[ -z "$extra_id" ]] && continue
-        tr_delete "/cards/${card_id}/attachments/${extra_id}" >/dev/null
-      done <<<"$extras"
-    fi
+  if $DRY_RUN; then
+    return 0
   fi
 
-  if [[ -n "$action" ]]; then
-    echo "$action"
-  fi
+  while IFS= read -r att_id; do
+    [[ -z "$att_id" ]] && continue
+    tr_delete "/cards/${card_id}/attachments/${att_id}" >/dev/null
+  done <<<"$ids"
 }
 
 # Indent a multi-line plan block for --dry-run (stderr).
@@ -727,9 +683,6 @@ for ((i = 0; i < story_count; i++)); do
       echo "would-create: $want_name (sc-$sid, list=${want_list_id:-n/a})" >&2
       dry_plan "labels" "${want_label_names_csv:-none}"
       dry_plan "desc" "$want_desc"
-      if [[ -n "$sperma" ]]; then
-        dry_plan "attachment" "${SHORTCUT_ATTACHMENT_NAME} → ${sperma}"
-      fi
       WOULD_CREATE=$((WOULD_CREATE + 1))
     else
       echo "create: $want_name (sc-$sid)" >&2
@@ -751,20 +704,14 @@ for ((i = 0; i < story_count; i++)); do
       if [[ -n "$want_labels_csv" ]]; then
         create_args+=(--data-urlencode "idLabels=${want_labels_csv}")
       fi
-      created_card=$(tr_post "/cards" "${create_args[@]}")
-      card_id=$(jq -r '.id // empty' <<<"$created_card")
-      if [[ -n "$card_id" && -n "$sperma" ]]; then
-        att_action=$(ensure_shortcut_attachment "$card_id" "$sperma")
-        if [[ -n "$att_action" ]]; then
-          echo "  attachment: ${att_action} '${SHORTCUT_ATTACHMENT_NAME}' → ${sperma}" >&2
-        fi
-      fi
+      tr_post "/cards" "${create_args[@]}" >/dev/null
       CREATED=$((CREATED + 1))
     fi
     continue
   fi
 
-  # UPDATE — compare and PUT only changed fields; always reconcile attachment.
+  # UPDATE — compare and PUT only changed fields; always clean leftover
+  # "Open in Shortcut" attachments (never create them).
   card=$(jq -c --arg id "$card_id" '.[] | select(.id == $id)' <<<"$cards")
 
   cur_name=$(jq -r '.name' <<<"$card")
@@ -796,12 +743,9 @@ for ((i = 0; i < story_count; i++)); do
     changes+=("labels")
   fi
 
-  att_action=""
-  if [[ -n "$sperma" ]]; then
-    att_action=$(ensure_shortcut_attachment "$card_id" "$sperma")
-    if [[ -n "$att_action" ]]; then
-      changes+=("attachment")
-    fi
+  att_action=$(cleanup_shortcut_attachments "$card_id")
+  if [[ -n "$att_action" ]]; then
+    changes+=("attachment-cleanup")
   fi
 
   if [[ ${#changes[@]} -eq 0 ]]; then
@@ -816,13 +760,13 @@ for ((i = 0; i < story_count; i++)); do
   change_list=$(IFS=,; echo "${changes[*]}")
   if $DRY_RUN; then
     echo "would-update: sc-$sid ($change_list)" >&2
-    # Show planned name/desc/labels/attachment when those fields would change.
+    # Show planned name/desc/labels/attachment cleanup when those would change.
     for c in "${changes[@]}"; do
       case "$c" in
-        name)       dry_plan "name" "$want_name" ;;
-        labels)     dry_plan "labels" "${want_label_names_csv:-none}" ;;
-        desc)       dry_plan "desc" "$want_desc" ;;
-        attachment) dry_plan "attachment" "${att_action}: ${SHORTCUT_ATTACHMENT_NAME} → ${sperma}" ;;
+        name)                dry_plan "name" "$want_name" ;;
+        labels)              dry_plan "labels" "${want_label_names_csv:-none}" ;;
+        desc)                dry_plan "desc" "$want_desc" ;;
+        attachment-cleanup)  dry_plan "attachment-cleanup" "${att_action}: remove '${SHORTCUT_ATTACHMENT_NAME}'" ;;
       esac
     done
     WOULD_UPDATE=$((WOULD_UPDATE + 1))
@@ -832,7 +776,7 @@ for ((i = 0; i < story_count; i++)); do
       tr_put "/cards/${card_id}" "${put_args[@]}" >/dev/null
     fi
     if [[ -n "$att_action" ]]; then
-      echo "  attachment: ${att_action} '${SHORTCUT_ATTACHMENT_NAME}' → ${sperma}" >&2
+      echo "  attachment-cleanup: ${att_action} '${SHORTCUT_ATTACHMENT_NAME}'" >&2
     fi
     UPDATED=$((UPDATED + 1))
   fi
