@@ -467,13 +467,15 @@ ensure_label() {
   printf '%s' "$id"
 }
 
-# Sunsama-friendly markdown description: link, story id, then each field
-# separated by a blank line (paragraph breaks). Sunsama collapses single \n
-# into one line; double newlines survive import. Empty values become "-".
-# The sc-<id> line is the stable identity for matching/prune (not the title).
+# Sunsama-friendly description: bare Shortcut permalink on its own line,
+# then sc-<id>, then each field separated by a blank line (paragraph breaks).
+# Sunsama collapses single \n into one line; double newlines survive import.
+# Use a bare URL (not [Open in Shortcut](url)): markdown + auto-linkify of the
+# same URL opens two tabs when clicked in Sunsama. One bare URL → one tab.
+# Empty values become "-". The sc-<id> line is identity for matching/prune.
 card_desc() {
   local sid="$1" permalink="$2" type="$3" team="$4" epic="$5" project="$6" requester="$7" priority="$8"
-  local link_line="[Open in Shortcut](${permalink:--})"
+  local link_line="${permalink:--}"
   printf '%s\n\nsc-%s\n\ntype: %s\n\nteam: %s\n\nepic: %s\n\nproject: %s\n\nrequester: %s\n\npriority: %s' \
     "$link_line" \
     "$sid" \
