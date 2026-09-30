@@ -1,6 +1,6 @@
 # Shortcut → Trello mirror
 
-Stateless bash+jq reconciler that mirrors your owned Shortcut stories onto a Trello board. Card **titles** are the story name only; the Shortcut id (`sc-<id>`) lives in the **description**. The story permalink is a **bare URL** on the first line of the description (legacy `sc-<id> …` titles are renamed on the next reconcile). The reconciler does **not** create Trello attachments for the Shortcut link; leftover `Open in Shortcut` attachments are deleted on reconcile.
+Stateless bash+jq reconciler that mirrors your owned Shortcut stories onto a Trello board. Card **titles** are the story name only; the Shortcut id (`sc-<id>`) lives in the **description**. The first description line is a labeled markdown link `[Open in Shortcut](permalink)` (legacy `sc-<id> …` titles are renamed on the next reconcile). The reconciler does **not** create Trello attachments for the Shortcut link; leftover `Open in Shortcut` attachments are deleted on reconcile.
 
 ## Prerequisites
 
@@ -44,7 +44,7 @@ Optional:
 | Field | Value |
 |---|---|
 | **Name** | Shortcut story name only (e.g. `Fix login redirect`) — **not** `sc-49529 Fix login redirect` |
-| **Description** | Bare Shortcut permalink on line 1, then `sc-<id>`, then blank-line metadata fields |
+| **Description** | `[Open in Shortcut](permalink)` on line 1, then `sc-<id>`, then blank-line metadata fields |
 | **Attachments** | None created for Shortcut. Existing `Open in Shortcut` link attachments on managed cards are **deleted** on reconcile (idempotent cleanup). |
 | **Identity** | Managed cards are matched by `sc-<digits>` in the description. Legacy cards whose **name** starts with `sc-<id> ` are still recognized so the next reconcile can rename them and move the id into the description. |
 | **Prune scope** | Only managed cards (desc marker and/or legacy name prefix) are create/update/archive candidates. Cards with neither marker are never touched. |
@@ -52,7 +52,7 @@ Optional:
 Each managed card gets a description shaped for Sunsama (blank line between every field so Sunsama does not flatten single newlines):
 
 ```
-https://app.shortcut.com/…/story/49529
+[Open in Shortcut](https://app.shortcut.com/…/story/49529)
 
 sc-49529
 
@@ -69,18 +69,18 @@ requester: …
 priority: …
 ```
 
-**Sunsama constraint (why bare URL):**
+**Sunsama link choice (labeled markdown, accept two tabs):**
 
 Sunsama pulls Trello card title + description into its task UI. Link forms tried:
 
 | Form | Result in Sunsama |
 |---|---|
-| `[Open in Shortcut](url)` markdown in description | Labeled, but **two tabs** (markdown hyperlink + auto-linkify) |
+| `[Open in Shortcut](url)` markdown in description | Labeled, but **two tabs** (markdown hyperlink + auto-linkify) — **chosen** |
 | `<a href="…">Open in Shortcut</a>` HTML in description | Shows **raw HTML**, not a rendered link |
 | Trello attachment `Open in Shortcut` | **Not imported** — Sunsama shows nothing for the Shortcut link |
-| Bare `https://…` URL alone on its own line | **One tab**, auto-linked — workable compromise (unlabeled) |
+| Bare `https://…` URL alone on its own line | **One tab**, auto-linked — unlabeled |
 
-So the description uses a bare permalink first. No markdown, no HTML, no Shortcut attachment.
+User prefers the labeled markdown link despite Sunsama opening two tabs. No bare URL line, no HTML, no Shortcut attachment.
 
 Empty fields use `-`. Type and team live in the description (not as Trello labels). The `sc-<id>` line is how the reconciler finds the card on later runs.
 
@@ -112,7 +112,7 @@ Prints would-create / would-update / would-archive actions without writing to Tr
 ./reconcile.sh
 ```
 
-Idempotent: creates missing managed cards, updates changed fields only (including renaming legacy `sc-<id> …` titles, putting the bare permalink + id into the description, and deleting leftover `Open in Shortcut` attachments), archives orphan managed cards (subject to `SAFE_PRUNE`). Never touches unmarked cards; never hard-deletes.
+Idempotent: creates missing managed cards, updates changed fields only (including renaming legacy `sc-<id> …` titles, putting the labeled markdown Shortcut link + id into the description, and deleting leftover `Open in Shortcut` attachments), archives orphan managed cards (subject to `SAFE_PRUNE`). Never touches unmarked cards; never hard-deletes.
 
 Summary line: `created=… updated=… archived=… skipped=…` (or `would-*` under `--dry-run`).
 

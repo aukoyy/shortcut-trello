@@ -492,15 +492,14 @@ ensure_label() {
 # import Trello attachments — but cleanup still deletes leftovers by this name.
 SHORTCUT_ATTACHMENT_NAME="Open in Shortcut"
 
-# Sunsama-friendly description: bare Shortcut permalink first (one tab,
-# auto-linked), then blank line, sc-<id>, then each field separated by a blank
-# line. No markdown / HTML — Sunsama double-opens markdown links and shows raw
-# HTML for <a>. Attachments are not imported into Sunsama, so the bare URL is
-# the workable compromise. Empty values become "-". The sc-<id> line is
-# identity for matching/prune.
+# Sunsama-friendly description: labeled markdown Shortcut link first, then
+# blank line, sc-<id>, then each field separated by a blank line. User accepts
+# that Sunsama may open two tabs (markdown hyperlink + auto-linkify). No bare
+# URL line, no HTML, no attachments. Empty values become "-". The sc-<id> line
+# is identity for matching/prune.
 card_desc() {
   local sid="$1" permalink="$2" type="$3" team="$4" epic="$5" project="$6" requester="$7" priority="$8"
-  local link_line="${permalink:--}"
+  local link_line="[Open in Shortcut](${permalink:--})"
   printf '%s\n\nsc-%s\n\ntype: %s\n\nteam: %s\n\nepic: %s\n\nproject: %s\n\nrequester: %s\n\npriority: %s' \
     "$link_line" \
     "$sid" \
