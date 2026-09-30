@@ -542,10 +542,10 @@ ensure_shortcut_attachment() {
 
   keep_id=$(jq -r --arg name "$SHORTCUT_ATTACHMENT_NAME" --arg url "$permalink" '
     (
-      [.[] | select(.name == $name and .url == $url)] | first //
-      [.[] | select(.name == $name)] | first //
-      [.[] | select(.url == $url)] | first //
-      empty
+      ([.[] | select(.name == $name and .url == $url)] | first)
+      // ([.[] | select(.name == $name)] | first)
+      // ([.[] | select(.url == $url)] | first)
+      // empty
     ) | .id // empty
   ' <<<"$managed")
 
