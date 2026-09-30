@@ -2,6 +2,8 @@
 
 Stateless bash+jq reconciler that mirrors your owned Shortcut stories onto a Trello board. Card **titles** are the story name only; the Shortcut id (`sc-<id>`) lives in the **description**. The first description line is a labeled markdown link `[Open in Shortcut](permalink)` (legacy `sc-<id> …` titles are renamed on the next reconcile). The reconciler does **not** create Trello attachments for the Shortcut link; leftover `Open in Shortcut` attachments are deleted on reconcile.
 
+Most fields stay **Shortcut → Trello**. With `STATE_MODE=lists` and `SYNC_TRELLO_LIST_TO_SHORTCUT=true` (default), **workflow state / list** is the exception: if Sunsama (or you) moves a matched card to a list whose name matches a Shortcut workflow state, the next reconcile updates the story’s `workflow_state_id` instead of moving the card back.
+
 ## Prerequisites
 
 - `bash` (macOS stock Bash 3.2 is supported — no Bash 4+ / associative arrays), `curl`, `jq`
@@ -35,6 +37,7 @@ Trello’s Power-Up page shows three different values — do not mix them up:
 Optional:
 
 - `STATE_MODE=lists` (default) — one Trello list per Shortcut workflow state; missing lists are created. `labels` maps state to a label instead.
+- `SYNC_TRELLO_LIST_TO_SHORTCUT=true` (default) — when `STATE_MODE=lists`, if a matched card’s current list **name** differs from the story’s workflow state and that name is a known Shortcut state (from `/workflows`), update Shortcut via `PUT /api/v3/stories/{id}` with `{"workflow_state_id": …}` and **do not** move the card back. If the list name is not a workflow state, log a warning and leave both sides alone (no force-move). Name, labels, description, and archive remain Shortcut→Trello only. Set `false` for classic one-way list sync.
 - `SAFE_PRUNE=true` (default) — only archive orphan **managed** cards (id in description, or legacy `sc-*` title) whose `dateLastActivity` is before local midnight today.
 - `OWNER_LABEL_COLORS=ryan:lime,øyvind:green,oyvind:green` (default) — comma-separated `name:color` pairs for owner labels. Keys match owner display names case-insensitively as substrings (`ryan` → Ryan, `oyvind`/`øyvind` → Øyvind). Unmatched owners use `OWNER_LABEL_COLOR_DEFAULT` (default `purple`, so they don’t collide with priority colors).
 - `PRIORITY_LABEL_COLORS=Highest:red,High:pink,Medium:yellow,Low:sky,Lowest:blue` (default) — maps Shortcut priority strings to Trello **preset** label colors (closest to Shortcut UI OKLCH; Trello cannot set custom OKLCH/hex). None / empty / `-` → no priority label. The `priority:` line stays in the description for Sunsama either way.
@@ -104,7 +107,7 @@ Priority is kept in the description **and** attached as a label (when set). Exis
 ./reconcile.sh --dry-run
 ```
 
-Prints would-create / would-update / would-archive actions without writing to Trello. For creates and name/desc/label updates, also prints the planned **name**, **label names**, and full **description** when those would change; for leftover `Open in Shortcut` attachments, prints **attachment-cleanup** (no API secrets). Exit non-zero on API failure.
+Prints would-create / would-update / would-archive actions without writing to Trello. For creates and name/desc/label updates, also prints the planned **name**, **label names**, and full **description** when those would change; for leftover `Open in Shortcut` attachments, prints **attachment-cleanup** (no API secrets). When a card’s list would drive a Shortcut state change, prints `would-update-shortcut-state: sc-<id> 'Old' → 'New'`. Exit non-zero on API failure.
 
 ## Real run
 
@@ -112,9 +115,9 @@ Prints would-create / would-update / would-archive actions without writing to Tr
 ./reconcile.sh
 ```
 
-Idempotent: creates missing managed cards, updates changed fields only (including renaming legacy `sc-<id> …` titles, putting the labeled markdown Shortcut link + id into the description, and deleting leftover `Open in Shortcut` attachments), archives orphan managed cards (subject to `SAFE_PRUNE`). Never touches unmarked cards; never hard-deletes.
+Idempotent: creates missing managed cards, updates changed fields only (including renaming legacy `sc-<id> …` titles, putting the labeled markdown Shortcut link + id into the description, and deleting leftover `Open in Shortcut` attachments), archives orphan managed cards (subject to `SAFE_PRUNE`). With reverse list sync enabled, diverging list names that match a workflow state update Shortcut instead of moving the card. Never touches unmarked cards; never hard-deletes.
 
-Summary line: `created=… updated=… archived=… skipped=…` (or `would-*` under `--dry-run`).
+Summary line: `created=… updated=… archived=… skipped=… updated-shortcut-state=…` (or `would-*` under `--dry-run`).
 
 ## Standalone story dump
 

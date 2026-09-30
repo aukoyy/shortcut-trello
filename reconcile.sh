@@ -43,6 +43,12 @@ fi
 
 STATE_MODE="${STATE_MODE:-lists}"
 SAFE_PRUNE="${SAFE_PRUNE:-true}"
+# When true (default) and STATE_MODE=lists: if a matched card's Trello list name
+# differs from the story's workflow state and matches a known state name, PUT
+# workflow_state_id on Shortcut and leave the card where it is (Sunsama moves).
+# Unknown list names: warn and skip forcing either side. Name/labels/archive stay
+# Shortcut→Trello only. Set false for classic one-way list sync.
+SYNC_TRELLO_LIST_TO_SHORTCUT="${SYNC_TRELLO_LIST_TO_SHORTCUT:-true}"
 # Comma-separated name:color pairs; keys match owner display names case-insensitively
 # as substrings (so "ryan" matches "Ryan", "Ryan Smith", etc.). Unmatched → default.
 # Trello only accepts preset colors (not custom OKLCH/hex). Defaults are the closest
@@ -59,6 +65,14 @@ case "$STATE_MODE" in
   lists|labels) ;;
   *)
     echo "error: STATE_MODE must be 'lists' or 'labels' (got: $STATE_MODE)" >&2
+    exit 1
+    ;;
+esac
+
+case "$SYNC_TRELLO_LIST_TO_SHORTCUT" in
+  true|false) ;;
+  *)
+    echo "error: SYNC_TRELLO_LIST_TO_SHORTCUT must be 'true' or 'false' (got: $SYNC_TRELLO_LIST_TO_SHORTCUT)" >&2
     exit 1
     ;;
 esac
@@ -130,10 +144,12 @@ CREATED=0
 UPDATED=0
 ARCHIVED=0
 SKIPPED=0
+UPDATED_SC_STATE=0
 WOULD_CREATE=0
 WOULD_UPDATE=0
 WOULD_ARCHIVE=0
 WOULD_SKIP=0
+WOULD_UPDATE_SC_STATE=0
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -198,6 +214,25 @@ sc_post() {
   }
   if [[ "$status" != 2* ]]; then
     http_fail "Shortcut" "POST" "$path" "$status" "$body_file"
+  fi
+  cat "$body_file"
+}
+
+sc_put() {
+  local path="$1"
+  local body="$2"
+  local body_file status
+  body_file="$(mktemp "$tmpdir/sc.XXXXXX")"
+  status="$(curl -sS -o "$body_file" -w "%{http_code}" -X PUT \
+    -H "Shortcut-Token: ${SHORTCUT_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "$body" \
+    "$SC_API$path")" || {
+    echo "error: Shortcut PUT ${path} → curl transport failure" >&2
+    exit 1
+  }
+  if [[ "$status" != 2* ]]; then
+    http_fail "Shortcut" "PUT" "$path" "$status" "$body_file"
   fi
   cat "$body_file"
 }
@@ -300,6 +335,15 @@ epics=$(sc_get /epics)
 cfields=$(sc_get /custom-fields)
 stories=$(sc_post /stories/search "{\"owner_id\": \"${SHORTCUT_OWNER_ID}\", \"archived\": false}")
 
+# Workflow state name → id (flat map for quick checks). Exact name match.
+# Duplicate names across workflows: last wins here; reverse sync resolves
+# within the story's own workflow (see UPDATE path).
+state_name_to_id=$(jq -c '
+  [.[].states[]]
+  | map(select(.name != null and .name != "") | {(.name): (.id | tostring)})
+  | add // {}
+' <<<"$workflows")
+
 # Field-resolution jq must match shortcut-stories.sh AS-IS (owners become Trello labels).
 desired=$(jq -n \
   --argjson stories   "$stories" \
@@ -327,6 +371,7 @@ desired=$(jq -n \
     type:      .story_type,
     team:      $G[.group_id          | tostring],
     state:     $S[.workflow_state_id | tostring],
+    workflow_state_id: .workflow_state_id,
     project:   $P[.project_id        | tostring],
     epic:      $E[.epic_id           | tostring],
     requester: $M[.requested_by_id   | tostring],
@@ -624,6 +669,7 @@ for ((i = 0; i < story_count; i++)); do
   stype=$(jq -r '.type // empty' <<<"$story")
   steam=$(jq -r '.team // empty' <<<"$story")
   sstate=$(jq -r '.state // empty' <<<"$story")
+  sws_id=$(jq -r '.workflow_state_id // empty' <<<"$story")
   sproject=$(jq -r '.project // empty' <<<"$story")
   sepic=$(jq -r '.epic // empty' <<<"$story")
   sreq=$(jq -r '.requester // empty' <<<"$story")
@@ -733,9 +779,62 @@ for ((i = 0; i < story_count; i++)); do
     put_args+=(--data-urlencode "desc=${want_desc}")
     changes+=("desc")
   fi
+
+  # List / workflow-state: when SYNC_TRELLO_LIST_TO_SHORTCUT and the card's
+  # list name differs from the story state, prefer Trello if the list name is a
+  # known Shortcut workflow state in the story's workflow (update Shortcut, do
+  # not move the card back). Unknown / other-workflow list names: warn and
+  # leave both sides alone (no force-move).
+  sc_state_changed=false
   if [[ "$STATE_MODE" == "lists" && -n "$want_list_id" && "$cur_list" != "$want_list_id" ]]; then
-    put_args+=(--data-urlencode "idList=${want_list_id}")
-    changes+=("list")
+    applied_reverse=false
+    if [[ "$SYNC_TRELLO_LIST_TO_SHORTCUT" == "true" ]]; then
+      cur_list_name=$(jq -r --arg id "$cur_list" \
+        '[.[] | select(.id == $id)] | first // empty | .name // empty' <<<"$lists_json")
+      if [[ -n "$cur_list_name" && "$cur_list_name" != "$sstate" ]]; then
+        # Resolve state id within the same workflow as the story (avoids
+        # colliding names across workflows). Fallback: flat name map.
+        new_ws_id=""
+        if [[ -n "$sws_id" && "$sws_id" != "null" ]]; then
+          new_ws_id=$(jq -r --argjson cur "$sws_id" --arg n "$cur_list_name" '
+            .[]
+            | select(.states | map(.id) | index($cur) != null)
+            | .states[]
+            | select(.name == $n)
+            | .id
+          ' <<<"$workflows" | head -n1)
+        fi
+        if [[ -z "$new_ws_id" ]]; then
+          # Name exists somewhere but not in this story's workflow, or no cur id.
+          any_id=$(jq -r --arg n "$cur_list_name" '.[$n] // empty' <<<"$state_name_to_id")
+          if [[ -n "$any_id" && -n "$sws_id" && "$sws_id" != "null" ]]; then
+            echo "warn: sc-$sid Trello list '${cur_list_name}' matches a Shortcut state in another workflow; leaving list and story state unchanged" >&2
+            applied_reverse=true
+          elif [[ -n "$any_id" ]]; then
+            new_ws_id="$any_id"
+          fi
+        fi
+        if [[ -n "$new_ws_id" ]]; then
+          if $DRY_RUN; then
+            echo "would-update-shortcut-state: sc-$sid '${sstate}' → '${cur_list_name}'" >&2
+            WOULD_UPDATE_SC_STATE=$((WOULD_UPDATE_SC_STATE + 1))
+          else
+            echo "update-shortcut-state: sc-$sid '${sstate}' → '${cur_list_name}'" >&2
+            sc_put "/stories/${sid}" "{\"workflow_state_id\": ${new_ws_id}}" >/dev/null
+            UPDATED_SC_STATE=$((UPDATED_SC_STATE + 1))
+          fi
+          sc_state_changed=true
+          applied_reverse=true
+        elif ! $applied_reverse; then
+          echo "warn: sc-$sid Trello list '${cur_list_name}' is not a known Shortcut workflow state; leaving list and story state unchanged" >&2
+          applied_reverse=true
+        fi
+      fi
+    fi
+    if ! $applied_reverse; then
+      put_args+=(--data-urlencode "idList=${want_list_id}")
+      changes+=("list")
+    fi
   fi
   if [[ "$cur_labels" != "$want_labels_sorted" ]]; then
     put_args+=(--data-urlencode "idLabels=${want_labels_sorted}")
@@ -748,6 +847,10 @@ for ((i = 0; i < story_count; i++)); do
   fi
 
   if [[ ${#changes[@]} -eq 0 ]]; then
+    if $sc_state_changed; then
+      # Shortcut state already applied/logged; no Trello field writes this pass.
+      continue
+    fi
     if $DRY_RUN; then
       WOULD_SKIP=$((WOULD_SKIP + 1))
     else
@@ -835,7 +938,7 @@ done
 
 # --- summary ---
 if $DRY_RUN; then
-  echo "summary: would-create=${WOULD_CREATE} would-update=${WOULD_UPDATE} would-archive=${WOULD_ARCHIVE} would-skip=${WOULD_SKIP}"
+  echo "summary: would-create=${WOULD_CREATE} would-update=${WOULD_UPDATE} would-archive=${WOULD_ARCHIVE} would-skip=${WOULD_SKIP} would-update-shortcut-state=${WOULD_UPDATE_SC_STATE}"
 else
-  echo "summary: created=${CREATED} updated=${UPDATED} archived=${ARCHIVED} skipped=${SKIPPED}"
+  echo "summary: created=${CREATED} updated=${UPDATED} archived=${ARCHIVED} skipped=${SKIPPED} updated-shortcut-state=${UPDATED_SC_STATE}"
 fi
