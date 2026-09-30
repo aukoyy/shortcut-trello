@@ -1,6 +1,6 @@
 # Shortcut → Trello mirror
 
-Stateless bash+jq reconciler that mirrors your owned Shortcut stories onto a Trello board. Card **titles** are the story name only; the Shortcut id (`sc-<id>`) lives in the **description** (legacy `sc-<id> …` titles are renamed on the next reconcile).
+Stateless bash+jq reconciler that mirrors your owned Shortcut stories onto a Trello board. Card **titles** are the story name only; the Shortcut id (`sc-<id>`) lives in the **description** (legacy `sc-<id> …` titles are renamed on the next reconcile). The labeled Shortcut link is a Trello **attachment** named `Open in Shortcut` (not in the description).
 
 ## Prerequisites
 
@@ -39,20 +39,19 @@ Optional:
 - `OWNER_LABEL_COLORS=ryan:lime,øyvind:green,oyvind:green` (default) — comma-separated `name:color` pairs for owner labels. Keys match owner display names case-insensitively as substrings (`ryan` → Ryan, `oyvind`/`øyvind` → Øyvind). Unmatched owners use `OWNER_LABEL_COLOR_DEFAULT` (default `purple`, so they don’t collide with priority colors).
 - `PRIORITY_LABEL_COLORS=Highest:red,High:pink,Medium:yellow,Low:sky,Lowest:blue` (default) — maps Shortcut priority strings to Trello **preset** label colors (closest to Shortcut UI OKLCH; Trello cannot set custom OKLCH/hex). None / empty / `-` → no priority label. The `priority:` line stays in the description for Sunsama either way.
 
-### Card mapping (name, description, identity)
+### Card mapping (name, description, attachment, identity)
 
 | Field | Value |
 |---|---|
 | **Name** | Shortcut story name only (e.g. `Fix login redirect`) — **not** `sc-49529 Fix login redirect` |
-| **Description** | HTML `<a href="…">Open in Shortcut</a>` + `sc-<id>` identity line + metadata fields (see below) |
+| **Description** | `sc-<id>` identity line + metadata fields only — **no** Shortcut URL, markdown link, or HTML |
+| **Attachment** | One URL attachment named `Open in Shortcut` pointing at the story permalink (`app_url`). Ensured every reconcile (create / fix URL / dedupe); never added again if already correct. |
 | **Identity** | Managed cards are matched by `sc-<digits>` in the description. Legacy cards whose **name** starts with `sc-<id> ` are still recognized so the next reconcile can rename them and move the id into the description. |
 | **Prune scope** | Only managed cards (desc marker and/or legacy name prefix) are create/update/archive candidates. Cards with neither marker are never touched. |
 
-Each managed card gets a description shaped for Sunsama (blank line between every field so Sunsama does not flatten single newlines). The Shortcut link is an **HTML anchor only** on the first line:
+Each managed card gets a description shaped for Sunsama (blank line between every field so Sunsama does not flatten single newlines). No link text in the description:
 
 ```
-<a href="https://app.shortcut.com/…">Open in Shortcut</a>
-
 sc-49529
 
 type: …
@@ -68,15 +67,23 @@ requester: …
 priority: …
 ```
 
-**Link format trial (Sunsama click behavior):**
+Plus a Trello attachment:
 
-| Form | Result |
+| Attachment field | Value |
+|---|---|
+| **name** | `Open in Shortcut` |
+| **url** | Shortcut story permalink |
+
+**Why an attachment (Sunsama click behavior):**
+
+| Form tried in description | Result |
 |---|---|
 | `[Open in Shortcut](url)` markdown | Labeled, but **two tabs** (markdown hyperlink + auto-linkify) |
 | Bare `https://…` URL | **One tab**, but plain unlabeled URL |
-| `<a href="…">Open in Shortcut</a>` HTML | Current trial — labeled hyperlink if Sunsama/Trello render HTML; may show raw tags if Trello escapes it |
+| `<a href="…">Open in Shortcut</a>` HTML | Sunsama shows **raw HTML**, not a rendered link |
+| Trello attachment `Open in Shortcut` | Labeled link without putting a URL in the description |
 
-Empty fields use `-`. Type and team live in the description (not as Trello labels). The `sc-<id>` line (after the Shortcut link) is how the reconciler finds the card on later runs.
+Empty fields use `-`. Type and team live in the description (not as Trello labels). The `sc-<id>` line is how the reconciler finds the card on later runs.
 
 **Labels:**
 
@@ -98,7 +105,7 @@ Priority is kept in the description **and** attached as a label (when set). Exis
 ./reconcile.sh --dry-run
 ```
 
-Prints would-create / would-update / would-archive actions without writing to Trello. For creates and name/desc/label updates, also prints the planned **name**, **label names**, and full **description** (no API secrets). Exit non-zero on API failure.
+Prints would-create / would-update / would-archive actions without writing to Trello. For creates and name/desc/label/attachment updates, also prints the planned **name**, **label names**, full **description**, and **attachment ensure** (`Open in Shortcut` → permalink) when that would change (no API secrets). Exit non-zero on API failure.
 
 ## Real run
 
@@ -106,7 +113,7 @@ Prints would-create / would-update / would-archive actions without writing to Tr
 ./reconcile.sh
 ```
 
-Idempotent: creates missing managed cards, updates changed fields only (including renaming legacy `sc-<id> …` titles and ensuring the id is in the description), archives orphan managed cards (subject to `SAFE_PRUNE`). Never touches unmarked cards; never hard-deletes.
+Idempotent: creates missing managed cards, updates changed fields only (including renaming legacy `sc-<id> …` titles, ensuring the id is in the description, and ensuring one `Open in Shortcut` attachment), archives orphan managed cards (subject to `SAFE_PRUNE`). Never touches unmarked cards; never hard-deletes.
 
 Summary line: `created=… updated=… archived=… skipped=…` (or `would-*` under `--dry-run`).
 
